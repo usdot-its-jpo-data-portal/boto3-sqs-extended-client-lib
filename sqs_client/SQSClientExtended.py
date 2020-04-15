@@ -186,12 +186,12 @@ class SQSClientExtended(object):
 		print("receipt_handle={}".format(receipt_handle))
 		self.sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
 
-	def send_message(self, queue_url, message, message_attributes={}):
+	def send_message(self, queue_url, message_body, message_group_id=None, message_deduplication_id=None, message_attributes={}):
 		"""
 		Delivers a message to the specified queue and uploads the message payload
 		to Amazon S3 if necessary.
 		"""
-		if message is None:
+		if message_body is None:
 			raise ValueError('message_body required')
 
 		msg_attributes_size = self.__get_msg_attributes_size(message_attributes)
@@ -206,14 +206,23 @@ class SQSClientExtended(object):
 		if large_payload_attribute_value:
 			raise ValueError("Message attribute name {} is reserved for use by SQS extended client.".format(SQSExtendedClientConstants.RESERVED_ATTRIBUTE_NAME.value))
 
-		if self.always_through_s3 or self.__is_large(str(message), message_attributes):
+		params = dict(QueueUrl=queue_url)
+		if message_group_id:
+			params['MessageGroupId'] = message_group_id
+		if message_deduplication_id:
+			params['MessageDeduplicationId'] = message_deduplication_id
+
+		if self.always_through_s3 or self.__is_large(str(message_body), message_attributes):
 			if not self.s3_bucket_name.strip():
 				raise ValueError('S3 bucket name cannot be null')
-			s3_key_message = json.dumps(self.__store_message_in_s3(message))
-			message_attributes[SQSExtendedClientConstants.RESERVED_ATTRIBUTE_NAME.value] = {'StringValue': str(self.__get_string_size_in_bytes(message)), 'DataType': 'Number'}
-			return self.sqs.send_message(QueueUrl=queue_url, MessageBody=s3_key_message, MessageAttributes=message_attributes)
+			s3_key_message = json.dumps(self.__store_message_in_s3(message_body))
+			message_attributes[SQSExtendedClientConstants.RESERVED_ATTRIBUTE_NAME.value] = {'StringValue': str(self.__get_string_size_in_bytes(message_body)), 'DataType': 'Number'}
+			params['MessageBody'] = s3_key_message
+			params['MessageAttributes'] = message_attributes
 		else:
-			return self.sqs.send_message(QueueUrl=queue_url, MessageBody=message)
+			params['MessageBody'] = message_body
+
+		return self.sqs.send_message(**params)
 
 	def __store_message_in_s3(self, message_body):
 		"""
